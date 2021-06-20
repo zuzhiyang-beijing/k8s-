@@ -1,1 +1,261 @@
+#1、准备3台设备
+192.168.142.130 k8s-master
+192.168.142.129 k8s-node1
+192.168.142.128 k8s-node2
+每台设备修改/etc/hosts为以上内容
+#2、关闭防火墙，否则node无法与master通信
+systemctl disable firewalld.service
+systemctl stop firewalld.service
+开始安装k8s：其中master需要安装etcd、kube-apiserver、kube-controller-manager、kube-scheduler服务；node节点上安装kubelet、kube-proxy服务
+#3、k8s-master安装etcd服务
+从github官网（https://github.com/coreos/etcd/releases）下载etcd二进制文件，将etcd和etcdctl文件复制的/usr/bin下；在/usr/lib/systemd/system/目录下创建etcd.service 配置如下
+[Unit]
+Description=Etcd Server
+After=network.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/var/lib/etcd/
+EnvironmentFile=-/etc/etcd/etcd.conf
+User=etcd
+# set GOMAXPROCS to number of processors
+ExecStart=/bin/bash -c "GOMAXPROCS=$(nproc) /usr/bin/etcd --name=\"${ETCD_NAME}\" --data-dir=\"${ETCD_DATA_DIR}\" --listen-client-urls=\"${ETCD_LISTEN_CLIENT_URLS}\" --initial-cluster-token=\"${ETCD_INITIAL_CLUSTER_TOKEN}\" --initial-cluster-state=\"${ETCD_INITIAL_CLUSTER_STATE}\" "
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+
+配置/etc/etcd/etcd.conf文件
+
+#[Member]
+#ETCD_CORS=""
+ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
+#ETCD_WAL_DIR=""
+ETCD_LISTEN_PEER_URLS="http://0.0.0.0:2380"
+ETCD_LISTEN_CLIENT_URLS="http://0.0.0.0:2379"
+#ETCD_MAX_SNAPSHOTS="5"
+#ETCD_MAX_WALS="5"
+ETCD_NAME="infral"
+#ETCD_SNAPSHOT_COUNT="100000"
+#ETCD_HEARTBEAT_INTERVAL="100"
+#ETCD_ELECTION_TIMEOUT="1000"
+#ETCD_QUOTA_BACKEND_BYTES="0"
+#ETCD_MAX_REQUEST_BYTES="1572864"
+#ETCD_GRPC_KEEPALIVE_MIN_TIME="5s"
+#ETCD_GRPC_KEEPALIVE_INTERVAL="2h0m0s"
+#ETCD_GRPC_KEEPALIVE_TIMEOUT="20s"
+#
+#[Clustering]
+ETCD_INITIAL_ADVERTISE_PEER_URLS="http://k8s-master:2380"
+ETCD_ADVERTISE_CLIENT_URLS="http://k8s-master:2379"
+#ETCD_DISCOVERY=""
+#ETCD_DISCOVERY_FALLBACK="proxy"
+#ETCD_DISCOVERY_PROXY=""
+#ETCD_DISCOVERY_SRV=""
+ETCD_INITIAL_CLUSTER="infral=http://k8s-master:2380"
+ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
+ETCD_INITIAL_CLUSTER_STATE="new"
+#ETCD_STRICT_RECONFIG_CHECK="true"
+#ETCD_ENABLE_V2="true"
+#
+#[Proxy]
+#ETCD_PROXY="off"
+#ETCD_PROXY_FAILURE_WAIT="5000"
+#ETCD_PROXY_REFRESH_INTERVAL="30000"
+#ETCD_PROXY_DIAL_TIMEOUT="1000"
+#ETCD_PROXY_WRITE_TIMEOUT="5000"
+#ETCD_PROXY_READ_TIMEOUT="0"
+#
+#[Security]
+#ETCD_CERT_FILE=""
+#ETCD_KEY_FILE=""
+#ETCD_CLIENT_CERT_AUTH="false"
+#ETCD_TRUSTED_CA_FILE=""
+#ETCD_AUTO_TLS="false"
+#ETCD_PEER_CERT_FILE=""
+#ETCD_PEER_KEY_FILE=""
+#ETCD_PEER_CLIENT_CERT_AUTH="false"
+#ETCD_PEER_TRUSTED_CA_FILE=""
+#ETCD_PEER_AUTO_TLS="false"
+#
+#[Logging]
+#ETCD_DEBUG="false"
+#ETCD_LOG_PACKAGE_LEVELS=""
+#ETCD_LOG_OUTPUT="default"
+#
+#[Unsafe]
+#ETCD_FORCE_NEW_CLUSTER="false"
+#
+#[Version]
+#ETCD_VERSION="false"
+#ETCD_AUTO_COMPACTION_RETENTION="0"
+#
+#[Profiling]
+#ETCD_ENABLE_PPROF="false"
+#ETCD_METRICS="basic"
+#
+#[Auth]
+#ETCD_AUTH_TOKEN="simple"
+4、设置后台开机启动
+systemctl enabled etcd.service
+systemctl start etcd.service
+检查是否启动成功
+etcdctl endpoint health
+6、在所有节点上安装docker环境，下载docker-ce（https://download.docker.com/linux/centos/7/x86_64/stable/Packages/docker-ce-17.03.1.ce-1.el7.centos.x86_64.rpm）
+然后yum install -y docker-ce-17.03.1.ce-1.el7.centos.x86_64.rpm
+systemctl enable docker.service
+systemctl start docker.service
+7、下载k8s的二进制文件（https://storage.googleapis.com/kubernetes-release/release/v1.16.6/kubernetes-server-linux-amd64.tar.gz），然后在每个节点解压
+tar -zxvf kubernetes-server-linux-amd64.tar.gz
+8、在master节点安装kube-apiserver、kube-controller-manager、kube-scheduler服务
+复制解压下的/kubernetes/server/bin的kube-apiserver、kube-controller-manager、kube-scheduler到/usr/bin下
+cp /app/kubernetes/server/bin/kube-apiserver kube-controller-manager kube-scheduler /usr/bin
+  8.1在/usr/lib/systemd/system创建 kube-apiserver.service
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+After=etcd.service
+Wants=etcd.service
+
+[Service]
+EnvironmentFile=/etc/kubernetes/apiserver
+ExecStart=/usr/bin/kube-apiserver $KUBE_API_ARGS
+Restart=on-failure
+Type=noftify
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+在/etc/kubernetes/文件夹下创建apiserver
+KUBE_API_ARGS="--etcd-servers=http://127.0.0.1:2379 --allow-privileged=true --insecure-bind-address=0.0.0.0 --insecure-port=8080 --service-cluster-ip-range=169.169.0.0/16 --service-node-port-range=1-65535 --admission-control=NamespaceLifecycle,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+8.2在/usr/lib/systemd/system创建 kube-controller-manager.service
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+After=kube-apiserver.service
+Requies=kube-apiserver.service
+
+[Service]
+EnvironmentFile=/etc/kubernetes/controller-manager
+ExecStart=/usr/bin/kube-controller-manager $KUBE_CONTROLLER_MANAGER_ARGS
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+在/etc/kubernetes/下配置controller-manager如下内容cat controller-manager
+KUBE_CONTROLLER_MANAGER_ARGS="--master=http://k8s-master:8080 --logtostderr=false --service-account-private-key-file=/var/run/kubernetes/apiserver.key --log-dir=/var/log/kubernetes --v=2"
+8.3在/usr/lib/systemd/system创建kube-scheduler.service cat kube-scheduler.service
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/kubernetes/kubernetes
+After=kube-apiserver.service
+Requires=kube-apiserver.service
+
+[Service]
+EnvironmentFile=/etc/kubernetes/scheduler
+ExecStart=/usr/bin/kube-scheduler $KUBE_SCHEDULER_ARGS
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+在/etc/kubernetes/下配置scheduler 内容如下 cat scheduler
+KUBE_SCHEDULER_ARGS="--master=http://k8s-master:8080 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+8.4启动服务
+systemctl enable kube-apiserver.service
+systemctl start kube-apiserver.service
+systemctl enable kube-controller-manager.service
+systemctl start kube-controller-manager.service
+systemctl enable kube-scheduler.service
+systemctl start kube-scheduler.service
+可以通过systemctl status 查看各个服务的状态
+
+9、在node节点安装kubelet、kube-proxy服务
+cp /app/kubernetes/server/bin/kubelet kube-proxy /usr/bin
+9.1在/usr/lib/systemd/system下创建kubelet.service如下 cat kubelet.service
+[Unit]
+Description=Kubernetes Kubelet Server
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/var/lib/kubelet
+EnvironmentFile=/etc/kubernetes/kubelet
+ExecStart=/usr/bin/kubelet $KUBELET_ARGS
+Restart=on-failure
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+在/etc/kubernetes/下创建kubelet内容如下,cat kubelet
+KUBELET_ARGS="--kubeconfig=/etc/kubernetes/kubeconfig --hostname-override=192.168.18.5 --fail-swap-on=false --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+在/etc/kubernetes/下创建kubeconfig内容如下 cat kubeconfig
+apiVersion: v1
+kind: Config
+clusters:
+- name: default
+  cluster:
+    server: http://k8s-master:8080
+users:
+- name: client
+  user:
+contexts:
+- context:
+    cluster: default
+    user: client
+  name: default
+current-context: default
+9.2在/usr/lib/systemd/system下创建kube-proxy.service内容如下，cat kube-proxy.service ：
+[Unit]
+Description=Kubernetes Kube-Proxy Server
+Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+After=network.target
+Requires=network.target
+
+[Service]
+EnvironmentFile=/etc/kubernetes/proxy
+ExecStart=/usr/bin/kube-proxy $KUBE_PROXY_ARGS
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+在/etc/kubernetes/创建proxy 内容如下，cat proxy：
+KUBE_PROXY_ARGS="--kubeconfig=/etc/kubernetes/kubeconfig --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+启动服务
+systemctl enable kubelet.service
+systemctl start kubelet.service
+systemctl enable kube-proxy.service
+systemctl start kube-proxy.service
+
+10、启动完成之后可以在master节点上查看节点状态
+kubectl get nodes
+NAME           STATUS   ROLES    AGE     VERSION
+192.168.18.4   Ready    <none>   4h28m   v1.16.6
+192.168.18.5   Ready    <none>   4h28m   v1.16.6
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  
+
+
+
+
+
+
+
+
 
